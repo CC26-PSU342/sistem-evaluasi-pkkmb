@@ -80,7 +80,7 @@ Hasil akhir teks yang sudah bersih untuk model ML.
 Label sentimen dalam bentuk angka:
 - 1 = positif
 - -1 = negatif
-- 0 = netral (jika ada)
+- 0 = netral
 
 ---
 sumber : output dari EDA_Analysis.ipynb
