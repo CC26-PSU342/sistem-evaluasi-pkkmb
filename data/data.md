@@ -16,6 +16,7 @@ Label hasil analisis sentimen:
 - positif: komentar baik
 - negatif: komentar keluhan
 - netral : komentar biasa/tidak emosional
+---
 sumber : spbm universitas pamulang
 ## =================================================
 
