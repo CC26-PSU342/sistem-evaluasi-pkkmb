@@ -27,7 +27,9 @@ data tambahan untuk proses slang word pada komentar/masukan pkkmb
 ## 1. slang
 Berisi kata tidak formal/bahasa gaul yang akan dinormalisasi.
 ## 2. formal
-Berisi bentuk kata baku dari slang.
+Berisi bentuk kata baku dari slang
+
+---
 sumber : https://github.com/luthfilkhairi/kamus/blob/master/Slangword-indonesian.xlsm
 ## =================================================
 
