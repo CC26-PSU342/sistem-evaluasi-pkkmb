@@ -112,39 +112,94 @@ const Feedback = () => {
         return;
       }
 
-      const CHUNK = 300;
+      const SENTIMENT_API_URL = import.meta.env.DEV
+        ? "/api-sentiment"
+        : (import.meta.env.VITE_SENTIMENT_API_URL || "https://shininess-yeah-ignore.ngrok-free.dev");
+
+      const LABEL_MAP: Record<string, "positive" | "negative" | "neutral"> = {
+        positif: "positive", negatif: "negative", netral: "neutral",
+        positive: "positive", negative: "negative", neutral: "neutral",
+      };
+
+      const VALID_SENTIMENTS = ["positive", "negative", "neutral"];
       const total = rows.length;
+      const errors: { row: number; error: string }[] = [];
+      const toInsert: any[] = [];
+
+      toast.info(`Menganalisis ${total} baris... mohon tunggu.`);
+
+      // Proses dengan concurrency 4
+      const concurrency = 4;
+      let idx = 0;
+      const worker = async () => {
+        while (idx < total) {
+          const i = idx++;
+          const r = rows[i];
+          try {
+            const prodi = (r.prodi || "").trim();
+            const comment = (r.comment || "").trim();
+            const name = r.name ? String(r.name).trim() || null : null;
+
+            if (!prodi || prodi.length < 2) throw new Error("Prodi tidak valid");
+            if (!comment || comment.length < 5) throw new Error("Komentar terlalu pendek");
+
+            let sentiment = r.sentiment && VALID_SENTIMENTS.includes(r.sentiment)
+              ? r.sentiment as "positive" | "negative" | "neutral"
+              : undefined;
+            let confidence = r.confidence ?? undefined;
+
+            if (!sentiment) {
+              const aiRes = await fetch(`${SENTIMENT_API_URL}/predict`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "ngrok-skip-browser-warning": "true",
+                },
+                body: JSON.stringify({ text: comment }),
+              });
+              if (!aiRes.ok) throw new Error(`Sentiment API ${aiRes.status}`);
+              const aiData = await aiRes.json();
+
+              const rawLabel = (aiData.sentimen || aiData.sentiment || "").toString().toLowerCase().trim();
+              sentiment = LABEL_MAP[rawLabel];
+              if (!sentiment) throw new Error("Respons API sentimen tidak valid");
+
+              const rawConf = aiData.confidence ?? aiData.probabilitas?.[aiData.sentimen];
+              confidence = typeof rawConf === "string" && rawConf.includes("%")
+                ? parseFloat(rawConf) / 100
+                : Number(rawConf) || 0.8;
+            }
+
+            toInsert.push({ name, prodi, comment, sentiment, confidence: confidence ?? 0.8 });
+          } catch (e: any) {
+            errors.push({ row: i + 1, error: e?.message || "Gagal" });
+          }
+        }
+      };
+
+      await Promise.all(Array.from({ length: concurrency }, worker));
+
+      // Insert ke Supabase DB per batch 100
       let inserted = 0;
-      let failed = 0;
-      const allErrors: any[] = [];
-      const totalChunks = Math.ceil(total / CHUNK);
-
-      toast.info(`Memproses ${total} baris dalam ${totalChunks} batch... mohon tunggu.`);
-
-      for (let i = 0; i < total; i += CHUNK) {
-        const batch = rows.slice(i, i + CHUNK);
+      const CHUNK = 100;
+      const totalChunks = Math.ceil(toInsert.length / CHUNK);
+      for (let i = 0; i < toInsert.length; i += CHUNK) {
+        const batch = toInsert.slice(i, i + CHUNK);
         const chunkIdx = Math.floor(i / CHUNK) + 1;
-        const { data, error } = await supabase.functions.invoke("bulk-import-feedback", {
-          body: { rows: batch },
-        });
-        if (error) {
-          toast.error(`Batch ${chunkIdx}/${totalChunks} gagal: ${error.message}`);
-          failed += batch.length;
-          continue;
+        const { error: dbErr, count } = await supabase
+          .from("feedback")
+          .insert(batch, { count: "exact" });
+        if (dbErr) {
+          errors.push({ row: 0, error: `DB batch ${chunkIdx}: ${dbErr.message}` });
+        } else {
+          inserted += count ?? batch.length;
         }
-        if (data?.error) {
-          toast.error(`Batch ${chunkIdx}/${totalChunks}: ${data.error}`);
-          failed += batch.length;
-          continue;
-        }
-        inserted += data.inserted || 0;
-        if (data.errors?.length) allErrors.push(...data.errors);
-        toast.info(`Batch ${chunkIdx}/${totalChunks} selesai (${inserted}/${total})`);
+        if (totalChunks > 1) toast.info(`Menyimpan batch ${chunkIdx}/${totalChunks}...`);
       }
 
-      const errCount = allErrors.length + failed;
+      const errCount = errors.length;
       toast.success(`Selesai: ${inserted} baris berhasil diimpor${errCount ? ` (${errCount} gagal)` : ""}.`);
-      if (allErrors.length) console.warn("Import errors:", allErrors);
+      if (errors.length) console.warn("Import errors:", errors);
     } catch (e: any) {
       toast.error(e?.message || "Gagal membaca file");
     } finally {
@@ -152,6 +207,7 @@ const Feedback = () => {
       if (fileRef.current) fileRef.current.value = "";
     }
   };
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,20 +225,73 @@ const Feedback = () => {
 
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("analyze-feedback", {
-        body: { name: name || undefined, prodi, comment },
+      // Langsung panggil API sentimen sendiri
+      const SENTIMENT_API_URL = import.meta.env.DEV
+        ? "/api-sentiment"
+        : (import.meta.env.VITE_SENTIMENT_API_URL || "https://shininess-yeah-ignore.ngrok-free.dev");
+
+      const aiRes = await fetch(`${SENTIMENT_API_URL}/predict`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        },
+        body: JSON.stringify({ text: comment }),
       });
 
-      if (error) {
-        toast.error(error.message || "Gagal menganalisis feedback");
-        return;
-      }
-      if (data?.error) {
-        toast.error(data.error);
+      if (!aiRes.ok) {
+        toast.error(`Gagal menghubungi API sentimen (${aiRes.status}). Coba lagi.`);
         return;
       }
 
-      setResult(data.analysis);
+      const aiData = await aiRes.json();
+
+      // API mengembalikan label Indonesia & confidence sebagai string persen
+      const LABEL_MAP: Record<string, "positive" | "negative" | "neutral"> = {
+        positif: "positive",
+        negatif: "negative",
+        netral: "neutral",
+        positive: "positive",
+        negative: "negative",
+        neutral: "neutral",
+      };
+
+      const REASONING_MAP: Record<string, string> = {
+        positive: "Komentar terdeteksi mengandung sentimen positif (pujian, kepuasan, atau pengalaman menyenangkan).",
+        negative: "Komentar terdeteksi mengandung sentimen negatif (keluhan, kritik, atau pengalaman buruk).",
+        neutral: "Komentar terdeteksi mengandung sentimen netral (saran, observasi, atau campuran).",
+      };
+
+      const rawLabel = (aiData.sentimen || aiData.sentiment || "").toString().toLowerCase().trim();
+      const sentiment = LABEL_MAP[rawLabel];
+
+      if (!sentiment) {
+        toast.error("Format respons API sentimen tidak valid.");
+        return;
+      }
+
+      const rawConf = aiData.confidence ?? aiData.probabilitas?.[aiData.sentimen];
+      const confidence = Math.max(0, Math.min(1,
+        typeof rawConf === "string" && rawConf.includes("%")
+          ? parseFloat(rawConf) / 100
+          : Number(rawConf) || 0
+      ));
+
+      // Simpan ke Supabase DB langsung
+      const { error: dbError } = await supabase.from("feedback").insert({
+        name: name || null,
+        prodi,
+        comment,
+        sentiment,
+        confidence,
+      });
+
+      if (dbError) {
+        toast.error("Gagal menyimpan feedback: " + dbError.message);
+        return;
+      }
+
+      setResult({ sentiment, confidence, reasoning: REASONING_MAP[sentiment] });
       toast.success("Feedback berhasil dikirim!");
     } catch (err) {
       console.error(err);

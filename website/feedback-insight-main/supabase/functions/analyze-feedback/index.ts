@@ -12,6 +12,12 @@ interface FeedbackPayload {
   comment: string;
 }
 
+const SENTIMENT_LABELS: Record<string, string> = {
+  positive: "Komentar terdeteksi mengandung sentimen positif (pujian, kepuasan, atau pengalaman menyenangkan).",
+  negative: "Komentar terdeteksi mengandung sentimen negatif (keluhan, kritik, atau pengalaman buruk).",
+  neutral: "Komentar terdeteksi mengandung sentimen netral (saran, observasi, atau campuran).",
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -43,66 +49,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      console.error("LOVABLE_API_KEY missing");
-      return new Response(JSON.stringify({ error: "Konfigurasi AI belum tersedia" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    // Use custom Sentiment Analysis API
+    const SENTIMENT_API_URL = Deno.env.get("SENTIMENT_API_URL") || "https://shininess-yeah-ignore.ngrok-free.dev";
 
-    // Call Lovable AI Gateway with structured tool calling
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const aiResponse = await fetch(`${SENTIMENT_API_URL}/predict`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          {
-            role: "system",
-            content:
-              "Anda adalah sistem analisis sentimen Bahasa Indonesia untuk evaluasi kegiatan PKKMB (Pengenalan Kehidupan Kampus bagi Mahasiswa Baru). Klasifikasikan komentar mahasiswa sebagai 'positive' (positif - menunjukkan kepuasan, pujian, atau pengalaman menyenangkan), 'negative' (negatif - keluhan, kritik, atau pengalaman buruk), atau 'neutral' (netral - saran, observasi tanpa nada emosi jelas, atau campuran). Berikan confidence score 0.00-1.00.",
-          },
-          {
-            role: "user",
-            content: `Analisis sentimen komentar evaluasi PKKMB ini:\n\n"${comment}"`,
-          },
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "classify_sentiment",
-              description: "Mengklasifikasikan sentimen komentar mahasiswa.",
-              parameters: {
-                type: "object",
-                properties: {
-                  sentiment: {
-                    type: "string",
-                    enum: ["positive", "negative", "neutral"],
-                    description: "Klasifikasi sentimen",
-                  },
-                  confidence: {
-                    type: "number",
-                    description: "Tingkat keyakinan klasifikasi antara 0 dan 1",
-                  },
-                  reasoning: {
-                    type: "string",
-                    description: "Alasan singkat klasifikasi (1 kalimat)",
-                  },
-                },
-                required: ["sentiment", "confidence", "reasoning"],
-                additionalProperties: false,
-              },
-            },
-          },
-        ],
-        tool_choice: { type: "function", function: { name: "classify_sentiment" } },
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: comment }),
     });
 
     if (!aiResponse.ok) {
@@ -112,14 +65,8 @@ Deno.serve(async (req) => {
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      if (aiResponse.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Kredit AI habis. Silakan tambahkan kredit di workspace Anda." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
       const errText = await aiResponse.text();
-      console.error("AI Gateway error:", aiResponse.status, errText);
+      console.error("Sentiment API error:", aiResponse.status, errText);
       return new Response(JSON.stringify({ error: "Gagal menganalisis sentimen" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -127,18 +74,39 @@ Deno.serve(async (req) => {
     }
 
     const aiData = await aiResponse.json();
-    const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall) {
-      console.error("No tool call in AI response:", JSON.stringify(aiData));
-      return new Response(JSON.stringify({ error: "Format respons AI tidak valid" }), {
+
+    // API mengembalikan label dalam Bahasa Indonesia dan confidence sebagai string persen
+    const LABEL_MAP: Record<string, "positive" | "negative" | "neutral"> = {
+      positif: "positive",
+      negatif: "negative",
+      netral: "neutral",
+      // fallback untuk label bahasa Inggris
+      positive: "positive",
+      negative: "negative",
+      neutral: "neutral",
+    };
+
+    const rawSentiment = (aiData.sentimen || aiData.sentiment || "").toString().toLowerCase().trim();
+    const sentiment = LABEL_MAP[rawSentiment];
+
+    // Confidence bisa berupa string '78.78%' atau angka 0.7878
+    const rawConfidence = aiData.confidence ?? aiData.probabilitas?.[aiData.sentimen];
+    const confidence = Math.max(0, Math.min(1,
+      typeof rawConfidence === "string" && rawConfidence.includes("%")
+        ? parseFloat(rawConfidence) / 100
+        : Number(rawConfidence) || 0
+    ));
+
+    if (!sentiment) {
+      console.error("Invalid sentiment from API:", JSON.stringify(aiData));
+      return new Response(JSON.stringify({ error: "Format respons API sentimen tidak valid" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const args = JSON.parse(toolCall.function.arguments);
-    const sentiment = args.sentiment as "positive" | "negative" | "neutral";
-    const confidence = Math.max(0, Math.min(1, Number(args.confidence) || 0));
+    // Generate reasoning automatically
+    const reasoning = SENTIMENT_LABELS[sentiment] || "Sentimen berhasil dianalisis.";
 
     // Save to DB using service role
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -168,7 +136,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         feedback: data,
-        analysis: { sentiment, confidence, reasoning: args.reasoning },
+        analysis: { sentiment, confidence, reasoning },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

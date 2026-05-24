@@ -19,9 +19,7 @@ const Index = () => {
               <span className="text-primary">Kegiatan PKKMB</span>
             </h1>
             <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-              Suara Anda penting bagi kami. Berikan masukan terhadap pelaksanaan PKKMB
-              dan AI kami akan menganalisis sentimen untuk membantu panitia melakukan
-              evaluasi yang lebih baik.
+              Proyek ini mengembangkan sistem web untuk analisis sentimen feedback mahasiswa terhadap PKKMB. Dengan NLP dan Machine Learning, sistem mengklasifikasikan kritik dan saran menjadi positif, negatif, atau netral guna mendukung evaluasi kampus yang objektif dan berbasis data.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Button asChild size="lg" className="shadow-elegant">
@@ -52,8 +50,8 @@ const Index = () => {
             {
               icon: MessageSquarePlus,
               step: "01",
-              title: "Isi Feedback",
-              desc: "Mahasiswa mengisi form evaluasi PKKMB dengan komentar dan ulasan jujur.",
+              title: "Unggah File ",
+              desc: "Dosen mengunggah file berupa csv yang berisi feedback mahasiswa mengenai kegiatan PKKMB.",
             },
             {
               icon: Brain,
@@ -92,7 +90,7 @@ const Index = () => {
       <section className="border-t bg-gradient-soft">
         <div className="container py-12 md:py-16 text-center">
           <h2 className="text-2xl md:text-3xl font-bold mb-3">
-            Siap menyampaikan masukan Anda?
+            Siap Mengevaluasi Feedback PKKMB?
           </h2>
           <p className="text-muted-foreground mb-6 max-w-xl mx-auto">
             Setiap komentar membantu meningkatkan kualitas PKKMB di periode mendatang.
