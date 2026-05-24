@@ -14,38 +14,38 @@ interface Row {
   confidence?: number | null;
 }
 
-async function classify(comment: string, apiKey: string): Promise<{ sentiment: Row["sentiment"]; confidence: number }> {
-  const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+async function classify(comment: string, apiUrl: string): Promise<{ sentiment: Row["sentiment"]; confidence: number }> {
+  const r = await fetch(`${apiUrl}/predict`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      messages: [
-        { role: "system", content: "Anda adalah sistem analisis sentimen Bahasa Indonesia untuk evaluasi PKKMB. Klasifikasikan komentar sebagai positive, negative, atau neutral." },
-        { role: "user", content: `Analisis sentimen:\n"${comment}"` },
-      ],
-      tools: [{
-        type: "function",
-        function: {
-          name: "classify_sentiment",
-          parameters: {
-            type: "object",
-            properties: {
-              sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
-              confidence: { type: "number" },
-            },
-            required: ["sentiment", "confidence"],
-            additionalProperties: false,
-          },
-        },
-      }],
-      tool_choice: { type: "function", function: { name: "classify_sentiment" } },
-    }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: comment }),
   });
-  if (!r.ok) throw new Error(`AI ${r.status}`);
-  const j = await r.json();
-  const args = JSON.parse(j.choices[0].message.tool_calls[0].function.arguments);
-  return { sentiment: args.sentiment, confidence: Math.max(0, Math.min(1, Number(args.confidence) || 0)) };
+  if (!r.ok) throw new Error(`Sentiment API ${r.status}`);
+  const data = await r.json();
+
+  // API mengembalikan label dalam Bahasa Indonesia dan confidence sebagai string persen
+  const LABEL_MAP: Record<string, "positive" | "negative" | "neutral"> = {
+    positif: "positive",
+    negatif: "negative",
+    netral: "neutral",
+    positive: "positive",
+    negative: "negative",
+    neutral: "neutral",
+  };
+
+  const rawSentiment = (data.sentimen || data.sentiment || "").toString().toLowerCase().trim();
+  const sentiment = LABEL_MAP[rawSentiment];
+  if (!sentiment) throw new Error("Format respons API sentimen tidak valid");
+
+  // Confidence bisa berupa string '78.78%' atau angka 0.7878
+  const rawConfidence = data.confidence ?? data.probabilitas?.[data.sentimen];
+  const confidence = Math.max(0, Math.min(1,
+    typeof rawConfidence === "string" && rawConfidence.includes("%")
+      ? parseFloat(rawConfidence) / 100
+      : Number(rawConfidence) || 0
+  ));
+
+  return { sentiment, confidence };
 }
 
 Deno.serve(async (req) => {
@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
     const rows: Row[] = Array.isArray(body?.rows) ? body.rows : [];
     if (!rows.length) return new Response(JSON.stringify({ error: "Tidak ada baris data" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+    const SENTIMENT_API_URL = Deno.env.get("SENTIMENT_API_URL") || "https://shininess-yeah-ignore.ngrok-free.dev";
 
     const errors: { row: number; error: string }[] = [];
     const toInsert: any[] = [];
@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
           let sentiment = r.sentiment;
           let confidence = typeof r.confidence === "number" ? r.confidence : null;
           if (!sentiment || !["positive", "negative", "neutral"].includes(sentiment)) {
-            const ai = await classify(comment, LOVABLE_API_KEY);
+            const ai = await classify(comment, SENTIMENT_API_URL);
             sentiment = ai.sentiment;
             confidence = ai.confidence;
           }
