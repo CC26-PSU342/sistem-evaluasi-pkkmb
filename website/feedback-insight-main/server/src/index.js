@@ -4,6 +4,8 @@ import cors from "cors";
 import morgan from "morgan";
 
 import feedbackRouter from "./routes/feedback.js";
+import generateSaranRouter from "./routes/generateSaran.js";
+import proxyGenerateRouter from "./routes/proxyGenerateSaran.js";
 import { notFound, errorHandler } from "./middleware/error.js";
 
 const app = express();
@@ -35,6 +37,8 @@ app.get("/api/v1", (_req, res) => {
 
 // Resources
 app.use("/api/v1/feedback", feedbackRouter);
+app.use("/api/generate-saran", generateSaranRouter);
+app.use("/api/generate-saran", proxyGenerateRouter);
 
 // 404 + error
 app.use(notFound);

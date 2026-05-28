@@ -174,6 +174,147 @@ const Admin = () => {
     toast.success("Data diekspor ke CSV");
   };
 
+  const [generating, setGenerating] = useState(false);
+  const [generatedText, setGeneratedText] = useState<string | null>(null);
+  const [showGeneratedDialog, setShowGeneratedDialog] = useState(false);
+
+  const extractGeneratedText = (data: any) => {
+    if (!data) return "";
+    if (typeof data === "string") return data;
+    if (data["hasil\ninferensi"]) return data["hasil\ninferensi"];
+    if (data.hasOwnProperty("hasil_inferensi")) return data["hasil_inferensi"];
+    if (data.result) return data.result;
+    if (data.text) return data.text;
+    for (const key of Object.keys(data || {})) {
+      if (key.replace(/[^a-zA-Z]/g, "").toLowerCase().includes("hasilinferensi")) {
+        return data[key];
+      }
+    }
+    return JSON.stringify(data, null, 2);
+  };
+
+  const isInferenceResponse = (data: any) => {
+    if (!data) return false;
+    if (typeof data === "string") {
+      return !/^\s*<\/?(html|!doctype)/i.test(data);
+    }
+    if (data["hasil\ninferensi"] || data.hasOwnProperty("hasil_inferensi") || data.result || data.text) return true;
+    return Object.keys(data || {}).some((key) => key.replace(/[^a-zA-Z]/g, "").toLowerCase().includes("hasilinferensi"));
+  };
+
+  const postToAi = async (url: string, payload: any) => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 405) {
+      const sep = url.includes("?") ? "&" : "?";
+      const getUrl = url.replace(/\/$/, "") + sep + "reviews_text=" + encodeURIComponent(payload.reviews_text || "");
+      return fetch(getUrl, { method: "GET", headers: { Accept: "application/json" } });
+    }
+    return res;
+  };
+
+  const fetchGenerativeAI = async (aiUrl: string, payload: any) => {
+    const normalizedUrl = aiUrl.replace(/\/$/, "");
+    let res = await postToAi(normalizedUrl, payload);
+    let text = await res.text();
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+
+    if (res.ok && !isInferenceResponse(data) && !normalizedUrl.endsWith("/api/summarize")) {
+      const summaryUrl = normalizedUrl + "/api/summarize";
+      const summaryRes = await postToAi(summaryUrl, payload);
+      if (summaryRes.ok) {
+        const summaryText = await summaryRes.text();
+        try {
+          return JSON.parse(summaryText);
+        } catch {
+          return summaryText;
+        }
+      }
+    }
+
+    if (!res.ok) {
+      const summaryUrl = normalizedUrl + "/api/summarize";
+      if (!normalizedUrl.endsWith("/api/summarize")) {
+        const summaryRes = await postToAi(summaryUrl, payload);
+        if (summaryRes.ok) {
+          const summaryText = await summaryRes.text();
+          try {
+            return JSON.parse(summaryText);
+          } catch {
+            return summaryText;
+          }
+        }
+      }
+      throw new Error(`Server error: ${res.status}`);
+    }
+
+    return data;
+  };
+
+  const handleGenerateSaran = async (row: FeedbackRow) => {
+    setGenerating(true);
+    try {
+      const aiUrl = (import.meta.env.VITE_GENERATIVE_AI_URL as string) ||
+        "https://constable-crimson-collector.ngrok-free.dev";
+      const payload = { reviews_text: row.comment };
+
+      try {
+        const data = await fetchGenerativeAI(aiUrl, payload);
+        const text = extractGeneratedText(data);
+        setGeneratedText(text);
+        setShowGeneratedDialog(true);
+        toast.success("Saran siap ditampilkan");
+        setGenerating(false);
+        return;
+      } catch (directErr: any) {
+        console.warn("Direct AI fetch failed, trying proxy:", directErr?.message || directErr);
+      }
+
+      const apiBase = (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:3000";
+      const proxyUrl = apiBase.replace(/\/$/, "") + "/api/generate-saran/proxy";
+      const proxyRes = await fetch(proxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!proxyRes.ok) throw new Error(`Proxy error: ${proxyRes.status}`);
+      const proxyTextRaw = await proxyRes.text();
+      let proxyData: any;
+      try {
+        proxyData = JSON.parse(proxyTextRaw);
+      } catch {
+        proxyData = proxyTextRaw;
+      }
+      const proxyText = extractGeneratedText(proxyData);
+      setGeneratedText(proxyText);
+      setShowGeneratedDialog(true);
+      toast.success("Saran siap ditampilkan (via proxy)");
+    } catch (err: any) {
+      toast.error(err?.message || "Gagal menghasilkan saran");
+    }
+    setGenerating(false);
+  };
+
+  const downloadGenerated = () => {
+    if (!generatedText) return;
+    const blob = new Blob([generatedText], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `saran-generated.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Saran diunduh");
+  };
+
 
 
   if (!authChecked) {
@@ -285,19 +426,20 @@ const Admin = () => {
                   <TableHead>Sentimen</TableHead>
                   <TableHead>Confidence</TableHead>
                   <TableHead>Tanggal</TableHead>
+                  <TableHead className="text-center">Generate Saran</TableHead>
                   <TableHead className="text-right">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-10">
+                    <TableCell colSpan={8} className="text-center py-10">
                       <Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
                     </TableCell>
                   </TableRow>
                 ) : filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
+                    <TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
                       Tidak ada data feedback.
                     </TableCell>
                   </TableRow>
@@ -319,6 +461,23 @@ const Admin = () => {
                       <TableCell>{(f.confidence * 100).toFixed(0)}%</TableCell>
                       <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                         {format(new Date(f.created_at), "dd MMM yyyy, HH:mm", { locale: localeId })}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleGenerateSaran(f)}
+                          disabled={generating}
+                        >
+                          {generating ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Menghasilkan...
+                            </>
+                          ) : (
+                            "Generate Saran"
+                          )}
+                        </Button>
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
@@ -391,6 +550,26 @@ const Admin = () => {
               ) : (
                 "Ya, Hapus Semua"
               )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showGeneratedDialog} onOpenChange={(o) => !o && setShowGeneratedDialog(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Hasil Generate Saran</AlertDialogTitle>
+            <AlertDialogDescription>
+              Berikut adalah ringkasan dan rekomendasi yang dihasilkan oleh AI.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="p-4">
+            <pre className="whitespace-pre-wrap text-sm max-h-64 overflow-auto">{generatedText}</pre>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowGeneratedDialog(false)}>Tutup</AlertDialogCancel>
+            <AlertDialogAction onClick={downloadGenerated} className="bg-primary text-primary-foreground">
+              Unduh
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
