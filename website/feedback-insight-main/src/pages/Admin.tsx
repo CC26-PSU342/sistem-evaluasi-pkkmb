@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, LogOut, Search, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { Download, Search, Trash2, Loader2, AlertTriangle, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -58,6 +58,7 @@ const Admin = () => {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [detailRow, setDetailRow] = useState<FeedbackRow | null>(null);
 
 
 
@@ -132,10 +133,7 @@ const Admin = () => {
     setShowDeleteAll(false);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/");
-  };
+
 
   const prodiList = useMemo(
     () => Array.from(new Set(data.map((d) => d.prodi))).sort(),
@@ -147,7 +145,7 @@ const Admin = () => {
       if (filterSentiment !== "all" && d.sentiment !== filterSentiment) return false;
       if (filterProdi !== "all" && d.prodi !== filterProdi) return false;
       if (search && !d.comment.toLowerCase().includes(search.toLowerCase()) &&
-          !(d.name || "").toLowerCase().includes(search.toLowerCase())) return false;
+        !(d.name || "").toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
   }, [data, filterSentiment, filterProdi, search]);
@@ -177,6 +175,7 @@ const Admin = () => {
   const [generating, setGenerating] = useState(false);
   const [generatedText, setGeneratedText] = useState<string | null>(null);
   const [showGeneratedDialog, setShowGeneratedDialog] = useState(false);
+  const [isApiUnavailable, setIsApiUnavailable] = useState(false);
 
   const extractGeneratedText = (data: any) => {
     if (!data) return "";
@@ -205,13 +204,23 @@ const Admin = () => {
   const postToAi = async (url: string, payload: any) => {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "ngrok-skip-browser-warning": "true",
+      },
       body: JSON.stringify(payload),
     });
     if (res.status === 405) {
       const sep = url.includes("?") ? "&" : "?";
       const getUrl = url.replace(/\/$/, "") + sep + "reviews_text=" + encodeURIComponent(payload.reviews_text || "");
-      return fetch(getUrl, { method: "GET", headers: { Accept: "application/json" } });
+      return fetch(getUrl, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "ngrok-skip-browser-warning": "true",
+        },
+      });
     }
     return res;
   };
@@ -261,45 +270,83 @@ const Admin = () => {
 
   const handleGenerateSaran = async (row: FeedbackRow) => {
     setGenerating(true);
-    try {
-      const aiUrl = (import.meta.env.VITE_GENERATIVE_AI_URL as string) ||
-        "https://constable-crimson-collector.ngrok-free.dev";
-      const payload = { reviews_text: row.comment };
+    const payload = { reviews_text: row.comment };
 
+    // === Prioritas 1: Colab API (VITE_GENERATIVE_AI_URL) ===
+    const aiUrl = (import.meta.env.VITE_GENERATIVE_AI_URL as string || "").trim();
+    if (aiUrl) {
       try {
         const data = await fetchGenerativeAI(aiUrl, payload);
         const text = extractGeneratedText(data);
         setGeneratedText(text);
         setShowGeneratedDialog(true);
-        toast.success("Saran siap ditampilkan");
+        toast.success("Saran berhasil dibuat dari API");
         setGenerating(false);
         return;
-      } catch (directErr: any) {
-        console.warn("Direct AI fetch failed, trying proxy:", directErr?.message || directErr);
+      } catch (colabErr: any) {
+        console.warn("Colab API gagal:", colabErr?.message || colabErr);
       }
+    }
 
-      const apiBase = (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:3000";
+    // === Prioritas 2: Gemini API langsung (VITE_GEMINI_API_KEY) ===
+    const geminiApiKey = (import.meta.env.VITE_GEMINI_API_KEY as string || "").trim();
+    if (geminiApiKey) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{
+                  text: `Sebagai sistem evaluasi PKKMB, berikan saran konstruktif atau rekomendasi perbaikan berdasarkan komentar mahasiswa berikut ini: "${row.comment}". Berikan tanggapan yang ringkas dan profesional.`
+                }]
+              }]
+            })
+          }
+        );
+        if (!response.ok) throw new Error(`Gemini API: ${response.status} ${response.statusText}`);
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "Tidak ada saran yang dihasilkan.";
+        setGeneratedText(text);
+        setShowGeneratedDialog(true);
+        toast.success("Saran berhasil dibuat (via Gemini API)");
+        setGenerating(false);
+        return;
+      } catch (geminiErr: any) {
+        console.warn("Gemini API gagal:", geminiErr?.message || geminiErr);
+      }
+    }
+
+    // === Prioritas 3: Proxy lokal ===
+    try {
+      const apiBase = (import.meta.env.VITE_API_BASE_URL as string || "http://localhost:3000").trim();
       const proxyUrl = apiBase.replace(/\/$/, "") + "/api/generate-saran/proxy";
       const proxyRes = await fetch(proxyUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!proxyRes.ok) throw new Error(`Proxy error: ${proxyRes.status}`);
-      const proxyTextRaw = await proxyRes.text();
-      let proxyData: any;
-      try {
-        proxyData = JSON.parse(proxyTextRaw);
-      } catch {
-        proxyData = proxyTextRaw;
+      if (proxyRes.ok) {
+        const proxyTextRaw = await proxyRes.text();
+        let proxyData: any;
+        try { proxyData = JSON.parse(proxyTextRaw); } catch { proxyData = proxyTextRaw; }
+        setGeneratedText(extractGeneratedText(proxyData));
+        setShowGeneratedDialog(true);
+        toast.success("Saran siap ditampilkan (via proxy)");
+        setGenerating(false);
+        return;
       }
-      const proxyText = extractGeneratedText(proxyData);
-      setGeneratedText(proxyText);
-      setShowGeneratedDialog(true);
-      toast.success("Saran siap ditampilkan (via proxy)");
-    } catch (err: any) {
-      toast.error(err?.message || "Gagal menghasilkan saran");
+    } catch (proxyErr: any) {
+      console.warn("Proxy gagal:", proxyErr?.message || proxyErr);
     }
+
+    // === Fallback: semua sumber tidak tersedia ===
+    setIsApiUnavailable(true);
+    setGeneratedText(null);
+    setShowGeneratedDialog(true);
+    toast.info("Generative API belum aktif");
     setGenerating(false);
   };
 
@@ -333,13 +380,9 @@ const Admin = () => {
         <div className="container py-20 max-w-md text-center">
           <Card className="p-8">
             <h2 className="text-xl font-bold mb-2">Akses Ditolak</h2>
-            <p className="text-sm text-muted-foreground mb-4">
+            <p className="text-sm text-muted-foreground">
               Akun Anda tidak memiliki hak akses admin.
             </p>
-            <Button onClick={handleLogout} variant="outline">
-              <LogOut className="mr-2 h-4 w-4" />
-              Keluar
-            </Button>
           </Card>
         </div>
       </Layout>
@@ -369,10 +412,6 @@ const Admin = () => {
             >
               <Trash2 className="mr-2 h-4 w-4" />
               Hapus Semua Data
-            </Button>
-            <Button onClick={handleLogout} variant="outline">
-              <LogOut className="mr-2 h-4 w-4" />
-              Keluar
             </Button>
           </div>
         </div>
@@ -427,7 +466,7 @@ const Admin = () => {
                   <TableHead>Confidence</TableHead>
                   <TableHead>Tanggal</TableHead>
                   <TableHead className="text-center">Generate Saran</TableHead>
-                  <TableHead className="text-right">Aksi</TableHead>
+                  <TableHead className="text-right">Hapus</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -451,9 +490,16 @@ const Admin = () => {
                       </TableCell>
                       <TableCell>{f.prodi}</TableCell>
                       <TableCell className="max-w-md">
-                        <p className="truncate" title={f.comment}>
-                          {f.comment}
-                        </p>
+                        <button
+                          type="button"
+                          className="flex items-center gap-1.5 text-left group w-full"
+                          onClick={() => setDetailRow(f)}
+                        >
+                          <p className="truncate flex-1">
+                            {f.comment}
+                          </p>
+                          <Eye className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                        </button>
                       </TableCell>
                       <TableCell>
                         <SentimentBadge sentiment={f.sentiment} />
@@ -501,6 +547,32 @@ const Admin = () => {
           Menampilkan {filtered.length} dari {data.length} feedback
         </p>
       </div>
+
+      <AlertDialog open={!!detailRow} onOpenChange={(o) => !o && setDetailRow(null)}>
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Detail Komentar</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span><strong>Nama:</strong> {detailRow?.name || "Anonim"}</span>
+                  <span><strong>Prodi:</strong> {detailRow?.prodi}</span>
+                  <span><strong>Sentimen:</strong> {detailRow?.sentiment}</span>
+                  <span><strong>Tanggal:</strong> {detailRow ? format(new Date(detailRow.created_at), "dd MMM yyyy, HH:mm", { locale: localeId }) : ""}</span>
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="px-4 pb-2">
+            <div className="rounded-lg bg-muted/50 p-4 max-h-72 overflow-y-auto">
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{detailRow?.comment}</p>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Tutup</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!deleteId} onOpenChange={(o) => !o && setDeleteId(null)}>
         <AlertDialogContent>
@@ -555,22 +627,49 @@ const Admin = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={showGeneratedDialog} onOpenChange={(o) => !o && setShowGeneratedDialog(false)}>
+      <AlertDialog
+        open={showGeneratedDialog}
+        onOpenChange={(o) => {
+          if (!o) {
+            setShowGeneratedDialog(false);
+            setIsApiUnavailable(false);
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Hasil Generate Saran</AlertDialogTitle>
+            <AlertDialogTitle>
+              {isApiUnavailable ? "Generative AI Belum Aktif" : "Hasil Generate Saran"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Berikut adalah ringkasan dan rekomendasi yang dihasilkan oleh AI.
+              {isApiUnavailable
+                ? "Server Generative AI belum dijalankan. Jalankan API di Colab terlebih dahulu lalu coba lagi."
+                : "Berikut adalah ringkasan dan rekomendasi yang dihasilkan oleh AI."}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="p-4">
-            <pre className="whitespace-pre-wrap text-sm max-h-64 overflow-auto">{generatedText}</pre>
-          </div>
+          {isApiUnavailable ? (
+            <div className="p-4 flex flex-col items-center gap-3 text-center">
+              <div className="rounded-full bg-yellow-100 dark:bg-yellow-900/30 p-4">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Pastikan notebook Colab sudah dijalankan dan URL pada <code className="bg-muted px-1 rounded text-xs">VITE_GENERATIVE_AI_URL</code> sudah benar.
+              </p>
+            </div>
+          ) : (
+            <div className="p-4">
+              <pre className="whitespace-pre-wrap text-sm max-h-64 overflow-auto">{generatedText}</pre>
+            </div>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setShowGeneratedDialog(false)}>Tutup</AlertDialogCancel>
-            <AlertDialogAction onClick={downloadGenerated} className="bg-primary text-primary-foreground">
-              Unduh
-            </AlertDialogAction>
+            <AlertDialogCancel onClick={() => { setShowGeneratedDialog(false); setIsApiUnavailable(false); }}>Tutup</AlertDialogCancel>
+            {!isApiUnavailable && (
+              <AlertDialogAction onClick={downloadGenerated} className="bg-primary text-primary-foreground">
+                Unduh
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

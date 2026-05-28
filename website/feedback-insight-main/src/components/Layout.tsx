@@ -1,6 +1,9 @@
-import { Link, useLocation } from "react-router-dom";
-import { GraduationCap, BarChart3, MessageSquarePlus, Shield } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { GraduationCap, BarChart3, MessageSquarePlus, Shield, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -15,6 +18,23 @@ const navItems = [
 
 export const Layout = ({ children }: LayoutProps) => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setIsLoggedIn(!!data.session);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      setIsLoggedIn(!!session);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate("/");
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -52,6 +72,18 @@ export const Layout = ({ children }: LayoutProps) => {
                 </Link>
               );
             })}
+            {isLoggedIn && (
+              <Button
+                onClick={handleLogout}
+                variant="ghost"
+                size="sm"
+                className="ml-1 text-muted-foreground hover:text-foreground"
+                id="navbar-logout-btn"
+              >
+                <LogOut className="h-4 w-4" />
+                <span className="hidden md:inline ml-1.5">Keluar</span>
+              </Button>
+            )}
           </nav>
         </div>
       </header>
