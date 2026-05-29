@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
     const rows: Row[] = Array.isArray(body?.rows) ? body.rows : [];
     if (!rows.length) return new Response(JSON.stringify({ error: "Tidak ada baris data" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    const SENTIMENT_API_URL = Deno.env.get("SENTIMENT_API_URL") || "https://shininess-yeah-ignore.ngrok-free.dev";
+    const SENTIMENT_API_URL = Deno.env.get("SENTIMENT_API_URL") || "https://deep-learning-sentiment-production.up.railway.app";
 
     const errors: { row: number; error: string }[] = [];
     const toInsert: any[] = [];

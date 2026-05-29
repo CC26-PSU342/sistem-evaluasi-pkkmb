@@ -6,7 +6,7 @@ const router = Router();
 
 // Proxy route to forward requests to external generative AI endpoint.
 // Set target via env var GENERATIVE_AI_URL or default to provided ngrok URL.
-const TARGET = process.env.GENERATIVE_AI_URL || "https://constable-crimson-collector.ngrok-free.dev";
+const TARGET = process.env.GENERATIVE_AI_URL || "https://argacac-generative-ai.hf.space";
 const REQUEST_TIMEOUT_MS = 15000;
 
 const isInferenceResponse = (data) => {

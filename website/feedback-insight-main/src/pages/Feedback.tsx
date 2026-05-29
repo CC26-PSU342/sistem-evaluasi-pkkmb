@@ -114,7 +114,7 @@ const Feedback = () => {
 
       const SENTIMENT_API_URL = import.meta.env.DEV
         ? "/api-sentiment"
-        : (import.meta.env.VITE_SENTIMENT_API_URL || "https://shininess-yeah-ignore.ngrok-free.dev");
+        : (import.meta.env.VITE_SENTIMENT_API_URL || "https://deep-learning-sentiment-production.up.railway.app");
 
       const LABEL_MAP: Record<string, "positive" | "negative" | "neutral"> = {
         positif: "positive", negatif: "negative", netral: "neutral",
@@ -228,7 +228,7 @@ const Feedback = () => {
       // Langsung panggil API sentimen sendiri
       const SENTIMENT_API_URL = import.meta.env.DEV
         ? "/api-sentiment"
-        : (import.meta.env.VITE_SENTIMENT_API_URL || "https://shininess-yeah-ignore.ngrok-free.dev");
+        : (import.meta.env.VITE_SENTIMENT_API_URL || "https://deep-learning-sentiment-production.up.railway.app");
 
       const aiRes = await fetch(`${SENTIMENT_API_URL}/predict`, {
         method: "POST",
