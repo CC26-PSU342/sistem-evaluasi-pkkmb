@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
     }
 
     // Use custom Sentiment Analysis API
-    const SENTIMENT_API_URL = Deno.env.get("SENTIMENT_API_URL") || "https://shininess-yeah-ignore.ngrok-free.dev";
+    const SENTIMENT_API_URL = Deno.env.get("SENTIMENT_API_URL") || "https://deep-learning-sentiment-production.up.railway.app";
 
     const aiResponse = await fetch(`${SENTIMENT_API_URL}/predict`, {
       method: "POST",

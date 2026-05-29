@@ -6,7 +6,7 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const sentimentApiUrl = env.VITE_SENTIMENT_API_URL || "https://shininess-yeah-ignore.ngrok-free.dev";
+  const sentimentApiUrl = env.VITE_SENTIMENT_API_URL || "https://deep-learning-sentiment-production.up.railway.app";
 
   return {
     server: {
