@@ -1,6 +1,8 @@
 # Sistem Evaluasi Kepuasan Mahasiswa Terhadap Kegiatan PKKMB
 ### Analisis Sentimen Berbasis Web — CC26-PSU342
 
+###Link Akses Model AI: https://drive.google.com/drive/folders/1W_lDbhalUur3cm1feebLLGWEn6qe5oro?usp=sharing 
+
 Sistem berbasis web untuk menganalisis sentimen feedback mahasiswa terhadap kegiatan PKKMB menggunakan Deep Learning dan Generative AI.
 
 ---
